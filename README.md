@@ -104,6 +104,23 @@ TripNow/
 
 ## Inicio rápido
 
+### Opción 0: Instalador automático (más fácil)
+
+Levanta todo con un solo comando — verifica requisitos, crea los `.env`,
+instala dependencias, arranca Postgres+Redis, corre las migraciones y
+siembra datos:
+
+```bash
+# Linux / macOS
+./scripts/install.sh
+
+# Windows (PowerShell)
+powershell -ExecutionPolicy Bypass -File scripts\install.ps1
+```
+
+Si falta algo (Node 20+, Docker, Docker Compose, git), el script te
+indica el comando exacto para instalarlo en tu sistema.
+
 ### Opción A: Docker Compose (recomendado)
 
 Levanta todo (Postgres, Redis, backend y frontend) con un único comando:
