@@ -12,29 +12,58 @@ datasource db {
 // ============================================================
 
 model User {
-  id             String        @id @default(cuid())
-  email          String        @unique
-  passwordHash   String
-  firstName      String
-  lastName       String
-  avatarUrl      String?
-  role           UserRole      @default(USER)
-  emailVerified  Boolean       @default(false)
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
+  id              String           @id @default(cuid())
+  email           String           @unique
+  passwordHash    String
+  firstName       String
+  lastName        String
+  phone           String?
+  avatarUrl       String?
+  role            UserRole         @default(USER)
+  emailVerified   Boolean          @default(false)
+  isActive        Boolean          @default(true)
+  lastLoginAt     DateTime?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
 
-  trips          Trip[]
-  bookings       Booking[]
-  payments       Payment[]
-  refreshTokens  RefreshToken[]
+  agentProfile    AgentProfile?
+  trips           Trip[]           @relation("UserTrips")
+  managedTrips    Trip[]           @relation("AgentTrips")
+  bookings        Booking[]
+  payments        Payment[]
+  refreshTokens   RefreshToken[]
   aiConversations AiConversation[]
+  reviews         Review[]
 
+  @@index([role])
+  @@index([email])
   @@map("users")
 }
 
 enum UserRole {
   USER
   ADMIN
+  AGENT
+}
+
+model AgentProfile {
+  id             String   @id @default(cuid())
+  userId         String   @unique
+  licenseNumber  String?  @unique
+  agencyName     String?
+  bio            String?
+  commissionRate Float    @default(0.10)
+  yearsExperience Int?
+  languages      String[] @default([])
+  specialties    String[] @default([])
+  rating         Float?
+  reviewCount    Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("agent_profiles")
 }
 
 model RefreshToken {
@@ -52,28 +81,399 @@ model RefreshToken {
 }
 
 // ============================================================
+// Geography (shared)
+// ============================================================
+
+model Airport {
+  id        String   @id @default(cuid())
+  code      String   @unique // IATA, e.g. "MAD"
+  icao      String?  @unique
+  name      String
+  city      String
+  country   String
+  latitude  Float?
+  longitude Float?
+  timezone  String?
+
+  departingFlights Flight[]      @relation("OriginAirport")
+  arrivingFlights  Flight[]      @relation("DestinationAirport")
+  flightStops      FlightStop[]
+
+  @@index([city])
+  @@index([country])
+  @@map("airports")
+}
+
+// ============================================================
+// Flights
+// ============================================================
+
+model Airline {
+  id      String   @id @default(cuid())
+  code    String   @unique // IATA, e.g. "IB"
+  icao    String?  @unique
+  name    String
+  country String?
+  logoUrl String?
+
+  flights Flight[]
+
+  @@map("airlines")
+}
+
+model Flight {
+  id                  String       @id @default(cuid())
+  flightNumber        String
+  airlineId           String
+  originAirportId     String
+  destinationAirportId String
+  departureTime       DateTime
+  arrivalTime         DateTime
+  durationMinutes     Int
+  basePriceCents      Int
+  currency            String       @default("USD")
+  cabinClass          CabinClass   @default(ECONOMY)
+  totalSeats          Int
+  availableSeats      Int
+  status              FlightStatus @default(SCHEDULED)
+  baggageAllowance    Json?
+  externalRef         String?
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+
+  airline             Airline      @relation(fields: [airlineId], references: [id])
+  originAirport       Airport      @relation("OriginAirport", fields: [originAirportId], references: [id])
+  destinationAirport  Airport      @relation("DestinationAirport", fields: [destinationAirportId], references: [id])
+  stops               FlightStop[]
+  bookings            FlightBooking[]
+
+  @@index([airlineId])
+  @@index([originAirportId, destinationAirportId])
+  @@index([departureTime])
+  @@index([status])
+  @@unique([airlineId, flightNumber, departureTime])
+  @@map("flights")
+}
+
+model FlightStop {
+  id            String   @id @default(cuid())
+  flightId      String
+  airportId     String
+  arrivalTime   DateTime
+  departureTime DateTime
+  stopOrder     Int
+  durationMinutes Int
+
+  flight        Flight   @relation(fields: [flightId], references: [id], onDelete: Cascade)
+  airport       Airport  @relation(fields: [airportId], references: [id])
+
+  @@index([flightId])
+  @@unique([flightId, stopOrder])
+  @@map("flight_stops")
+}
+
+enum CabinClass {
+  ECONOMY
+  PREMIUM_ECONOMY
+  BUSINESS
+  FIRST
+}
+
+enum FlightStatus {
+  SCHEDULED
+  BOARDING
+  IN_AIR
+  LANDED
+  DELAYED
+  CANCELLED
+}
+
+// ============================================================
+// Hotels
+// ============================================================
+
+model Hotel {
+  id            String       @id @default(cuid())
+  name          String
+  description   String?
+  city          String
+  country       String
+  address       String
+  latitude      Float
+  longitude     Float
+  starRating    Int? // 1..5
+  amenities     String[]     @default([]) // wifi, pool, gym, spa, parking, breakfast
+  checkInTime   String?      // "15:00"
+  checkOutTime  String?      // "11:00"
+  phone         String?
+  email         String?
+  websiteUrl    String?
+  imageUrls     String[]     @default([])
+  policies      Json?
+  averageRating Float?
+  reviewCount   Int          @default(0)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  rooms         HotelRoom[]
+  bookings      HotelBooking[]
+  reviews       Review[]
+
+  @@index([city, country])
+  @@index([starRating])
+  @@map("hotels")
+}
+
+model HotelRoom {
+  id                 String                    @id @default(cuid())
+  hotelId            String
+  type               RoomType
+  name               String
+  description        String?
+  maxOccupancy       Int
+  bedConfiguration   String?                   // "1 king" / "2 doubles"
+  pricePerNightCents Int
+  currency           String                    @default("USD")
+  totalRooms         Int                       @default(1)
+  amenities          String[]                  @default([])
+  imageUrls          String[]                  @default([])
+
+  hotel              Hotel                     @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  availability       HotelRoomAvailability[]
+  bookings           HotelBooking[]
+
+  @@index([hotelId])
+  @@map("hotel_rooms")
+}
+
+model HotelRoomAvailability {
+  id             String    @id @default(cuid())
+  roomId         String
+  date           DateTime  @db.Date
+  availableCount Int
+  priceCents     Int       // overrides room.pricePerNightCents for that date
+
+  room           HotelRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@unique([roomId, date])
+  @@index([date])
+  @@map("hotel_room_availability")
+}
+
+enum RoomType {
+  SINGLE
+  DOUBLE
+  TWIN
+  TRIPLE
+  SUITE
+  FAMILY
+  DELUXE
+  STUDIO
+}
+
+// ============================================================
+// Car rentals
+// ============================================================
+
+model CarRentalCompany {
+  id         String      @id @default(cuid())
+  name       String      @unique
+  logoUrl    String?
+  websiteUrl String?
+  rating     Float?
+
+  cars       CarRental[]
+
+  @@map("car_rental_companies")
+}
+
+model CarRentalLocation {
+  id         String      @id @default(cuid())
+  name       String
+  city       String
+  country    String
+  address    String?
+  latitude   Float?
+  longitude  Float?
+  phone      String?
+  openingHours Json?
+
+  cars       CarRental[] @relation("CarLocation")
+  pickups    CarBooking[] @relation("PickupLocation")
+  dropoffs   CarBooking[] @relation("DropoffLocation")
+
+  @@index([city, country])
+  @@map("car_rental_locations")
+}
+
+model CarRental {
+  id               String           @id @default(cuid())
+  companyId        String
+  locationId       String
+  vehicleType      VehicleType
+  category         CarCategory
+  make             String
+  model            String
+  year             Int?
+  transmission     Transmission     @default(AUTOMATIC)
+  fuelType         FuelType         @default(GASOLINE)
+  seats            Int
+  doors            Int
+  airConditioned   Boolean          @default(true)
+  pricePerDayCents Int
+  currency         String           @default("USD")
+  totalUnits       Int              @default(1)
+  available        Boolean          @default(true)
+  imageUrl         String?
+  features         String[]         @default([])
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  company          CarRentalCompany @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  location         CarRentalLocation @relation("CarLocation", fields: [locationId], references: [id])
+  bookings         CarBooking[]
+
+  @@index([companyId])
+  @@index([locationId])
+  @@index([category])
+  @@map("car_rentals")
+}
+
+enum VehicleType {
+  CAR
+  SUV
+  VAN
+  TRUCK
+  MOTORCYCLE
+}
+
+enum CarCategory {
+  ECONOMY
+  COMPACT
+  MIDSIZE
+  FULLSIZE
+  PREMIUM
+  LUXURY
+  SUV
+  VAN
+  CONVERTIBLE
+}
+
+enum Transmission {
+  AUTOMATIC
+  MANUAL
+}
+
+enum FuelType {
+  GASOLINE
+  DIESEL
+  HYBRID
+  ELECTRIC
+}
+
+// ============================================================
+// Attractions
+// ============================================================
+
+model Attraction {
+  id              String                   @id @default(cuid())
+  externalId      String?                  @unique
+  source          String?
+  name            String
+  description     String?
+  city            String
+  country         String
+  address         String?
+  latitude        Float
+  longitude       Float
+  category        AttractionCategory
+  subcategories   String[]                 @default([])
+  rating          Float?
+  reviewCount     Int                      @default(0)
+  priceCents      Int? // adult ticket price
+  childPriceCents Int?
+  currency        String                   @default("USD")
+  durationMinutes Int? // suggested visit duration
+  imageUrls       String[]                 @default([])
+  websiteUrl      String?
+  phone           String?
+  metadata        Json?
+  createdAt       DateTime                 @default(now())
+  updatedAt       DateTime                 @updatedAt
+
+  openingHours    AttractionOpeningHours[]
+  bookings        AttractionBooking[]
+  itineraryItems  ItineraryItem[]
+  reviews         Review[]
+
+  @@index([city, country])
+  @@index([category])
+  @@index([rating])
+  @@map("attractions")
+}
+
+model AttractionOpeningHours {
+  id           String     @id @default(cuid())
+  attractionId String
+  dayOfWeek    Int // 0=Sunday .. 6=Saturday
+  opensAt      String? // "09:00"
+  closesAt     String? // "18:00"
+  closed       Boolean    @default(false)
+
+  attraction   Attraction @relation(fields: [attractionId], references: [id], onDelete: Cascade)
+
+  @@unique([attractionId, dayOfWeek])
+  @@map("attraction_opening_hours")
+}
+
+enum AttractionCategory {
+  MUSEUM
+  PARK
+  MONUMENT
+  THEME_PARK
+  HISTORICAL_SITE
+  NATURE
+  BEACH
+  TOUR
+  RESTAURANT
+  NIGHTLIFE
+  SHOPPING
+  ENTERTAINMENT
+  RELIGIOUS_SITE
+  OTHER
+}
+
+// ============================================================
 // Trips & Itineraries
 // ============================================================
 
 model Trip {
-  id            String          @id @default(cuid())
-  userId        String
-  title         String
-  destination   String
-  startDate     DateTime
-  endDate       DateTime
-  budgetCents   Int?
-  currency      String          @default("USD")
-  status        TripStatus      @default(DRAFT)
-  notes         String?
-  createdAt     DateTime        @default(now())
-  updatedAt     DateTime        @updatedAt
+  id             String          @id @default(cuid())
+  userId         String
+  agentId        String?
+  title          String
+  destination    String
+  startDate      DateTime
+  endDate        DateTime
+  budgetCents    Int?
+  spentCents     Int             @default(0)
+  currency       String          @default("USD")
+  travelersCount Int             @default(1)
+  status         TripStatus      @default(DRAFT)
+  notes          String?
+  isPublic       Boolean         @default(false)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
 
-  user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user           User            @relation("UserTrips", fields: [userId], references: [id], onDelete: Cascade)
+  agent          User?           @relation("AgentTrips", fields: [agentId], references: [id], onDelete: SetNull)
   itineraryItems ItineraryItem[]
-  bookings      Booking[]
+  bookings       Booking[]
 
   @@index([userId])
+  @@index([agentId])
+  @@index([status])
+  @@index([startDate, endDate])
   @@map("trips")
 }
 
@@ -86,24 +486,30 @@ enum TripStatus {
 }
 
 model ItineraryItem {
-  id          String              @id @default(cuid())
-  tripId      String
-  type        ItineraryItemType
-  title       String
-  description String?
-  startsAt    DateTime
-  endsAt      DateTime?
-  location    String?
-  latitude    Float?
-  longitude   Float?
-  metadata    Json?
-  orderIndex  Int                 @default(0)
-  createdAt   DateTime            @default(now())
-  updatedAt   DateTime            @updatedAt
+  id           String            @id @default(cuid())
+  tripId       String
+  attractionId String?
+  type         ItineraryItemType
+  title        String
+  description  String?
+  startsAt     DateTime
+  endsAt       DateTime?
+  location     String?
+  latitude     Float?
+  longitude    Float?
+  costCents    Int?
+  currency     String            @default("USD")
+  metadata     Json?
+  orderIndex   Int               @default(0)
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
 
-  trip        Trip                @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  trip         Trip              @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  attraction   Attraction?       @relation(fields: [attractionId], references: [id], onDelete: SetNull)
 
   @@index([tripId])
+  @@index([attractionId])
+  @@index([startsAt])
   @@map("itinerary_items")
 }
 
@@ -119,29 +525,38 @@ enum ItineraryItemType {
 }
 
 // ============================================================
-// Bookings (flights, cars, attractions)
+// Bookings (one base record + one specialized per type)
 // ============================================================
 
 model Booking {
-  id              String         @id @default(cuid())
-  userId          String
-  tripId          String?
-  type            BookingType
-  status          BookingStatus  @default(PENDING)
-  provider        String
-  providerRef     String?
-  details         Json
-  totalCents      Int
-  currency        String         @default("USD")
-  createdAt       DateTime       @default(now())
-  updatedAt       DateTime       @updatedAt
+  id            String         @id @default(cuid())
+  bookingNumber String         @unique // human friendly e.g. TN-2026-000123
+  userId        String
+  tripId        String?
+  type          BookingType
+  status        BookingStatus  @default(PENDING)
+  totalCents    Int
+  currency      String         @default("USD")
+  notes         String?
+  confirmedAt   DateTime?
+  cancelledAt   DateTime?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
 
-  user            User           @relation(fields: [userId], references: [id], onDelete: Cascade)
-  trip            Trip?          @relation(fields: [tripId], references: [id], onDelete: SetNull)
-  payment         Payment?
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  trip          Trip?          @relation(fields: [tripId], references: [id], onDelete: SetNull)
+
+  flightBooking     FlightBooking?
+  hotelBooking      HotelBooking?
+  carBooking        CarBooking?
+  attractionBooking AttractionBooking?
+
+  payment       Payment?
 
   @@index([userId])
   @@index([tripId])
+  @@index([type])
+  @@index([status])
   @@map("bookings")
 }
 
@@ -160,29 +575,128 @@ enum BookingStatus {
   REFUNDED
 }
 
+model FlightBooking {
+  id              String     @id @default(cuid())
+  bookingId       String     @unique
+  flightId        String
+  passengerCount  Int
+  cabinClass      CabinClass
+  pnr             String? // confirmation code from airline
+  seatAssignments Json?
+  passengerInfo   Json? // names, DOB, passport
+
+  booking         Booking    @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  flight          Flight     @relation(fields: [flightId], references: [id])
+
+  @@index([flightId])
+  @@map("flight_bookings")
+}
+
+model HotelBooking {
+  id           String    @id @default(cuid())
+  bookingId    String    @unique
+  hotelId      String
+  roomId       String
+  checkInDate  DateTime  @db.Date
+  checkOutDate DateTime  @db.Date
+  guestCount   Int
+  roomCount    Int       @default(1)
+  guestNames   Json?
+  specialRequests String?
+
+  booking      Booking   @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  hotel        Hotel     @relation(fields: [hotelId], references: [id])
+  room         HotelRoom @relation(fields: [roomId], references: [id])
+
+  @@index([hotelId])
+  @@index([roomId])
+  @@index([checkInDate, checkOutDate])
+  @@map("hotel_bookings")
+}
+
+model CarBooking {
+  id                String            @id @default(cuid())
+  bookingId         String            @unique
+  carRentalId       String
+  pickupLocationId  String?
+  dropoffLocationId String?
+  pickupDate        DateTime
+  dropoffDate       DateTime
+  driverAge         Int
+  driverInfo        Json?
+  insurance         Json?
+
+  booking           Booking           @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  carRental         CarRental         @relation(fields: [carRentalId], references: [id])
+  pickupLocation    CarRentalLocation? @relation("PickupLocation", fields: [pickupLocationId], references: [id])
+  dropoffLocation   CarRentalLocation? @relation("DropoffLocation", fields: [dropoffLocationId], references: [id])
+
+  @@index([carRentalId])
+  @@index([pickupDate, dropoffDate])
+  @@map("car_bookings")
+}
+
+model AttractionBooking {
+  id           String     @id @default(cuid())
+  bookingId    String     @unique
+  attractionId String
+  visitDate    DateTime
+  visitTimeSlot String? // "10:00"
+  adultCount   Int        @default(1)
+  childCount   Int        @default(0)
+  ticketType   String?
+
+  booking      Booking    @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  attraction   Attraction @relation(fields: [attractionId], references: [id])
+
+  @@index([attractionId])
+  @@index([visitDate])
+  @@map("attraction_bookings")
+}
+
 // ============================================================
 // Payments
 // ============================================================
 
 model Payment {
-  id                  String          @id @default(cuid())
+  id                  String        @id @default(cuid())
+  paymentNumber       String        @unique // human friendly e.g. PMT-2026-000123
   userId              String
-  bookingId           String?         @unique
+  bookingId           String?       @unique
   amountCents         Int
-  currency            String          @default("USD")
-  status              PaymentStatus   @default(PENDING)
-  provider            String          @default("stripe")
-  providerIntentId    String?         @unique
+  feeCents            Int           @default(0)
+  refundedAmountCents Int           @default(0)
+  currency            String        @default("USD")
+  method              PaymentMethod
+  status              PaymentStatus @default(PENDING)
+  provider            String        @default("stripe")
+  providerIntentId    String?       @unique
   providerCustomerId  String?
+  providerChargeId    String?
+  reference           String?
+  failureReason       String?
+  paidAt              DateTime?
+  refundedAt          DateTime?
   metadata            Json?
-  createdAt           DateTime        @default(now())
-  updatedAt           DateTime        @updatedAt
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
 
-  user                User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  booking             Booking?        @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+  user                User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  booking             Booking?      @relation(fields: [bookingId], references: [id], onDelete: SetNull)
 
   @@index([userId])
+  @@index([status])
+  @@index([method])
   @@map("payments")
+}
+
+enum PaymentMethod {
+  CARD
+  PAYPAL
+  BANK_TRANSFER
+  WALLET
+  CRYPTO
+  CASH
 }
 
 enum PaymentStatus {
@@ -191,6 +705,32 @@ enum PaymentStatus {
   SUCCEEDED
   FAILED
   REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+// ============================================================
+// Reviews (hotels & attractions)
+// ============================================================
+
+model Review {
+  id           String      @id @default(cuid())
+  userId       String
+  hotelId      String?
+  attractionId String?
+  rating       Int // 1..5
+  title        String?
+  body         String?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  user         User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  hotel        Hotel?      @relation(fields: [hotelId], references: [id], onDelete: Cascade)
+  attraction   Attraction? @relation(fields: [attractionId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([hotelId])
+  @@index([attractionId])
+  @@map("reviews")
 }
 
 // ============================================================
@@ -198,15 +738,15 @@ enum PaymentStatus {
 // ============================================================
 
 model AiConversation {
-  id          String       @id @default(cuid())
-  userId      String
-  agentType   AiAgentType
-  title       String?
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
+  id        String      @id @default(cuid())
+  userId    String
+  agentType AiAgentType
+  title     String?
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
 
-  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  messages    AiMessage[]
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages  AiMessage[]
 
   @@index([userId])
   @@map("ai_conversations")
@@ -220,14 +760,14 @@ enum AiAgentType {
 }
 
 model AiMessage {
-  id              String          @id @default(cuid())
-  conversationId  String
-  role            AiMessageRole
-  content         String          @db.Text
-  toolCalls       Json?
-  createdAt       DateTime        @default(now())
+  id             String         @id @default(cuid())
+  conversationId String
+  role           AiMessageRole
+  content        String         @db.Text
+  toolCalls      Json?
+  createdAt      DateTime       @default(now())
 
-  conversation    AiConversation  @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  conversation   AiConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
   @@index([conversationId])
   @@map("ai_messages")
@@ -238,31 +778,4 @@ enum AiMessageRole {
   ASSISTANT
   SYSTEM
   TOOL
-}
-
-// ============================================================
-// Cached external data
-// ============================================================
-
-model Attraction {
-  id            String   @id @default(cuid())
-  externalId    String   @unique
-  source        String
-  name          String
-  description   String?
-  city          String
-  country       String
-  latitude      Float
-  longitude     Float
-  categories    String[]
-  rating        Float?
-  priceLevel    Int?
-  openingHours  Json?
-  imageUrl      String?
-  metadata      Json?
-  cachedAt      DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-
-  @@index([city, country])
-  @@map("attractions")
 }
